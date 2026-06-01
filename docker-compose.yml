@@ -1,0 +1,65 @@
+# ── docker-compose.yml ───────────────────────────────────────────────────────
+# Starts three services:
+#   db       – PostgreSQL 16
+#   backend  – FastAPI on port 8000
+#   frontend – React (Nginx) on port 3000
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL database ─────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: inventory_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB:       ${POSTGRES_DB:-inventory_db}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # persist data between restarts
+    ports:
+      - "5432:5432"   # expose for local tools like DBeaver / pgAdmin
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-inventory_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inventory_backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@db:5432/${POSTGRES_DB:-inventory_db}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # wait until Postgres is ready
+    volumes:
+      - ./backend:/app               # hot-reload during development
+
+  # ── React frontend ───────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: inventory_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    environment:
+      REACT_APP_API_URL: http://localhost:8000/api   # browser-side URL
+
+# ── Named volume ─────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
